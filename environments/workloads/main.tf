@@ -1,13 +1,13 @@
-resource "kubernetes_namespace_v1" "nginx" {
+resource "kubernetes_namespace" "nginx" {
   metadata {
     name = "nginx"
   }
 }
 
-resource "kubernetes_deployment_v1" "nginx" {
+resource "kubernetes_deployment" "nginx" {
   metadata {
     name      = "nginx"
-    namespace = kubernetes_namespace_v1.nginx.metadata[0].name
+    namespace = kubernetes_namespace.nginx.metadata[0].name
 
     labels = {
       app = "nginx"
@@ -46,10 +46,10 @@ resource "kubernetes_deployment_v1" "nginx" {
   }
 }
 
-resource "kubernetes_service_v1" "nginx" {
+resource "kubernetes_service" "nginx" {
   metadata {
     name      = "nginx"
-    namespace = kubernetes_namespace_v1.nginx.metadata[0].name
+    namespace = kubernetes_namespace.nginx.metadata[0].name
   }
 
   spec {

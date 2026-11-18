@@ -1,4 +1,3 @@
-
 terraform {
   required_version = ">= 1.6.0"
 
@@ -16,7 +15,7 @@ provider "minikube" {
 
 resource "minikube_cluster" "local" {
   cluster_name = "kubernetes-lab"
-
+  
   # Cluster configuration
   driver            = "docker"
   nodes             = 1
@@ -38,5 +37,5 @@ resource "minikube_cluster" "local" {
 
   # Wait for cluster components to become ready
   wait         = ["all"]
-  wait_timeout = 15
+  wait_timeout = 30
 }

@@ -1,16 +1,16 @@
 output "namespace" {
   description = "Kubernetes namespace"
-  value       = kubernetes_namespace_v1.nginx.metadata[0].name
+  value       = kubernetes_namespace.nginx.metadata[0].name
 }
 
 output "deployment_name" {
   description = "NGINX deployment name"
-  value       = kubernetes_deployment_v1.nginx.metadata[0].name
+  value       = kubernetes_deployment.nginx.metadata[0].name
 }
 
 output "service_name" {
   description = "NGINX service name"
-  value       = kubernetes_service_v1.nginx.metadata[0].name
+  value       = kubernetes_service.nginx.metadata[0].name
 }
 
 output "service_endpoint" {
@@ -20,5 +20,5 @@ output "service_endpoint" {
 
 output "replicas" {
   description = "Desired NGINX replicas"
-  value       = kubernetes_deployment_v1.nginx.spec[0].replicas
+  value       = kubernetes_deployment.nginx.spec[0].replicas
 }
