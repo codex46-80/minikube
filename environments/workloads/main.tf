@@ -15,7 +15,7 @@ resource "kubernetes_deployment_v1" "nginx" {
   }
 
   spec {
-    replicas = 3 # Increased replicas for testing scaling
+    replicas = 4
 
     selector {
       match_labels = {
