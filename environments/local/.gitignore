@@ -1,0 +1,13 @@
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# Credentials
+*.pem
+*.key
+kubeconfig
