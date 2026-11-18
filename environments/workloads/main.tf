@@ -1,4 +1,3 @@
-
 resource "kubernetes_namespace_v1" "nginx" {
   metadata {
     name = "nginx"
@@ -94,9 +93,10 @@ resource "kubernetes_service_v1" "nginx" {
       name        = "http"
       port        = 80
       target_port = 80
+      node_port   = 30080
       protocol    = "TCP"
     }
 
-    type = "ClusterIP"
+    type = "NodePort"
   }
 }

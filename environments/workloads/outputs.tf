@@ -1,4 +1,3 @@
-
 output "namespace" {
   description = "Kubernetes namespace"
   value       = kubernetes_namespace_v1.nginx.metadata[0].name
@@ -15,8 +14,8 @@ output "service_name" {
 }
 
 output "service_endpoint" {
-  description = "Internal Kubernetes DNS endpoint"
-  value       = "http://nginx.nginx.svc.cluster.local"
+  description = "Access NGINX locally via Minikube NodePort"
+  value       = "http://<minikube-ip>:30080"
 }
 
 output "replicas" {
