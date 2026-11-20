@@ -10,7 +10,7 @@ Features:
 - Export .patch file
 - Dry-run mode
 - Chunked reading for large files
-- Gradio Web UI (compatible with Gradio 6)
+- Gradio Web UI with Split-Screen 2D Pixel Office Agent (Gradio 6)
 """
 
 import os
@@ -480,7 +480,6 @@ Create branch → Write files → Run tests → Commit → (PR or patch)
                 self.messages.append({"role": "assistant", "content": raw_content})
                 return raw_content
 
-        # Step budget exhausted: ask for a direct wrap-up summary without calling more tools
         self.messages.append({
             "role": "user",
             "content": "Step limit reached. Provide a concise summary of what actions were taken and what remains."
@@ -499,6 +498,367 @@ Create branch → Write files → Run tests → Commit → (PR or patch)
         self.messages.append({"role": "assistant", "content": summary})
         return summary
 
+# ====================== 2D PIXEL OFFICE CANVAS (Gradio 6) ======================
+
+OFFICE_HTML_TEMPLATE = """
+<div id="pixel-office-wrap" style="background:#0f172a;border:2px solid #38bdf8;border-radius:14px;padding:12px;
+            box-shadow:0 10px 25px rgba(0,0,0,0.45);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+            position:relative;z-index:20;">
+  <style>
+    #pixel-office-wrap,
+    #pixel-office-wrap *,
+    #pixel-office-wrap.pending,
+    #pixel-office-wrap .pending {
+      opacity: 1 !important;
+      filter: none !important;
+      backdrop-filter: none !important;
+    }
+  </style>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding:0 4px;">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span id="status-dot" style="width:10px;height:10px;border-radius:2px;background:#4ade80;display:inline-block;"></span>
+      <span style="color:#f8fafc;font-weight:700;font-size:13px;letter-spacing:0.06em;">AGENT HQ // 2D PIXEL OFFICE</span>
+    </div>
+    <span id="status-badge" style="font-size:11px;padding:2px 8px;border-radius:4px;background:#1e293b;color:#4ade80;border:1px solid #334155;">
+      IDLE • PATROLLING OFFICE
+    </span>
+  </div>
+  <canvas id="office-canvas" width="320" height="240"
+          style="width:100%;height:560px;image-rendering:pixelated;border-radius:8px;
+                 background:#1e1b2e;display:block;border:1px solid #334155;"></canvas>
+  <div style="display:flex;justify-content:space-between;color:#cbd5e1;font-size:11px;margin-top:8px;padding:0 4px;">
+    <span>🪑 Workstation: Dual-Monitor Dev Rig</span>
+    <span>☕ Coffee &amp; Server Rack Online</span>
+  </div>
+</div>
+"""
+
+OFFICE_JS_ON_LOAD = """
+const canvas = element.querySelector('#office-canvas');
+const ctx = canvas.getContext('2d');
+const badge = element.querySelector('#status-badge');
+const dot = element.querySelector('#status-dot');
+
+ctx.imageSmoothingEnabled = false;
+
+const host = element.closest('.block, .gr-html, [class*="html"]') || element.parentElement;
+if (host) {
+  const styleTag = document.createElement('style');
+  styleTag.textContent = `
+    .pending, [data-testid="pending"], .generating {
+      opacity: 1 !important;
+    }
+  `;
+  document.head.appendChild(styleTag);
+}
+
+let currentState = props.value || 'idle';
+
+function syncStatusUI(st) {
+  if (st === 'working') {
+    badge.textContent = 'WORKING • TYPING AT DESK';
+    badge.style.color = '#38bdf8';
+    badge.style.borderColor = '#38bdf8';
+    dot.style.background = '#38bdf8';
+    dot.style.boxShadow = '0 0 8px #38bdf8';
+  } else {
+    badge.textContent = 'IDLE • PATROLLING OFFICE';
+    badge.style.color = '#4ade80';
+    badge.style.borderColor = '#4ade80';
+    dot.style.background = '#4ade80';
+    dot.style.boxShadow = '0 0 8px #4ade80';
+  }
+}
+syncStatusUI(currentState);
+
+if (typeof watch === 'function') {
+  watch('value', () => {
+    currentState = props.value || 'idle';
+    syncStatusUI(currentState);
+  });
+}
+
+const deskSpot = { x: 168, y: 122 };
+const patrolSpots = [
+  { x: 74, y: 146 },
+  { x: 245, y: 156 },
+  { x: 132, y: 172 },
+  { x: 168, y: 122 }
+];
+let patrolIdx = 0;
+let idleTimer = 0;
+
+const agent = {
+  x: 168,
+  y: 122,
+  dir: 'down',
+  frame: 0,
+  typing: false
+};
+
+const particles = [];
+
+function px(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+}
+
+function drawRoom(tick) {
+  px(0, 0, 320, 92, '#28253b');
+  px(0, 88, 320, 4, '#181626');
+
+  for (let x = 8; x < 320; x += 24) {
+    px(x, 0, 2, 88, '#2f2b45');
+  }
+
+  for (let y = 92; y < 240; y += 16) {
+    for (let x = 0; x < 320; x += 16) {
+      const even = ((x / 16) + (y / 16)) % 2 === 0;
+      px(x, y, 16, 16, even ? '#36324a' : '#312d44');
+    }
+  }
+
+  px(26, 16, 68, 52, '#131629');
+  px(24, 14, 72, 2, '#64748b');
+  px(24, 68, 72, 3, '#94a3b8');
+  px(24, 14, 2, 54, '#64748b');
+  px(94, 14, 2, 54, '#64748b');
+  px(59, 16, 2, 52, '#475569');
+  px(36, 24, 2, 2, tick % 60 < 30 ? '#fef08a' : '#94a3b8');
+  px(78, 28, 2, 2, tick % 80 < 40 ? '#e0f2fe' : '#64748b');
+  px(46, 36, 1, 1, '#ffffff');
+  px(28, 50, 12, 18, '#1e293b');
+  px(42, 44, 14, 24, '#0f172a');
+  px(64, 48, 12, 20, '#1e293b');
+  px(78, 42, 14, 26, '#0f172a');
+  px(46, 48, 2, 2, '#facc15');
+  px(82, 47, 2, 2, '#38bdf8');
+
+  px(12, 74, 26, 56, '#1e293b');
+  px(14, 76, 22, 52, '#0f172a');
+  for (let sy = 80; sy < 120; sy += 9) {
+    px(16, sy, 18, 6, '#1e293b');
+    const blink = ((tick + sy) % 24) < 12;
+    px(18, sy + 2, 2, 2, blink ? '#4ade80' : '#15803d');
+    px(22, sy + 2, 2, 2, currentState === 'working' && !blink ? '#38bdf8' : '#0284c7');
+  }
+
+  px(44, 96, 30, 34, '#78350f');
+  px(42, 94, 34, 4, '#92400e');
+  px(49, 78, 16, 16, '#cbd5e1');
+  px(52, 82, 10, 6, '#0f172a');
+  px(55, 89, 4, 4, '#ef4444');
+  const steamOff = Math.floor(tick / 15) % 3;
+  px(56, 74 - steamOff, 2, 2, 'rgba(255,255,255,0.65)');
+
+  px(244, 34, 52, 74, '#5c2d16');
+  px(247, 37, 46, 68, '#3f1d0b');
+  const bookColors = ['#ef4444', '#3b82f6', '#eab308', '#10b981', '#a855f7', '#f97316'];
+  for (let shelf = 0; shelf < 3; shelf++) {
+    const sy = 54 + shelf * 22;
+    px(247, sy, 46, 3, '#78350f');
+    for (let b = 0; b < 8; b++) {
+      px(250 + b * 5, sy - 12, 4, 12, bookColors[(b + shelf * 2) % bookColors.length]);
+    }
+  }
+
+  px(286, 126, 16, 14, '#b45309');
+  px(284, 124, 20, 3, '#d97706');
+  px(288, 112, 4, 12, '#16a34a');
+  px(294, 108, 4, 16, '#22c55e');
+  px(283, 115, 5, 6, '#15803d');
+  px(298, 114, 5, 7, '#16a34a');
+
+  px(108, 152, 116, 56, '#27243b');
+  px(112, 156, 108, 48, '#312e59');
+  px(116, 160, 100, 40, '#27243b');
+}
+
+function drawDeskAndMonitors(tick) {
+  px(158, 128, 20, 14, '#1e293b');
+  px(160, 126, 16, 12, '#3b82f6');
+  px(166, 142, 4, 8, '#0f172a');
+  px(160, 149, 16, 2, '#60a5fa');
+
+  px(116, 98, 104, 8, '#d97706');
+  px(116, 106, 104, 4, '#92400e');
+  px(120, 110, 6, 28, '#451a03');
+  px(210, 110, 6, 28, '#451a03');
+
+  px(132, 74, 32, 20, '#0f172a');
+  px(134, 76, 28, 16, '#020617');
+  px(146, 94, 4, 4, '#60a5fa');
+
+  px(170, 74, 34, 20, '#0f172a');
+  px(172, 76, 30, 16, '#020617');
+  px(185, 94, 4, 4, '#60a5fa');
+
+  const codeSpeed = currentState === 'working' ? 4 : 18;
+  const scroll = Math.floor(tick / codeSpeed);
+  const lineColors = ['#38bdf8', '#4ade80', '#facc15', '#f472b6', '#a78bfa'];
+
+  for (let i = 0; i < 4; i++) {
+    const c1 = lineColors[(i + scroll) % lineColors.length];
+    const w1 = 8 + ((i * 7 + scroll * 3) % 16);
+    px(136, 78 + i * 3, w1, 2, c1);
+
+    const c2 = lineColors[(i + scroll + 2) % lineColors.length];
+    const w2 = 10 + ((i * 5 + scroll * 5) % 16);
+    px(174, 78 + i * 3, w2, 2, c2);
+  }
+
+  px(156, 100, 22, 4, '#cbd5e1');
+  px(182, 101, 4, 3, '#38bdf8');
+  px(202, 93, 6, 6, '#f43f5e');
+}
+
+function drawAgent(tick) {
+  const x = Math.round(agent.x);
+  const y = Math.round(agent.y);
+  const isMoving = agent.frame > 0;
+  const isWorking = currentState === 'working';
+  const bob = agent.typing ? (tick % 8 < 4 ? 0 : -1) : (isMoving ? (Math.floor(tick / 6) % 2) : (tick % 40 < 20 ? 0 : -1));
+
+  if (isWorking) {
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+    ctx.beginPath();
+    ctx.arc(x, y + 6, 13, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  px(x - 7, y + 11, 14, 4, 'rgba(0,0,0,0.45)');
+
+  const stepOff = isMoving ? (Math.floor(tick / 6) % 2 === 0 ? -1 : 1) : 0;
+  px(x - 5, y + 6 + stepOff, 4, 6, '#1d4ed8');
+  px(x + 1, y + 6 - stepOff, 4, 6, '#1d4ed8');
+  px(x - 5, y + 11 + stepOff, 4, 1, '#38bdf8');
+  px(x + 1, y + 11 - stepOff, 4, 1, '#38bdf8');
+
+  px(x - 7, y - 3 + bob, 14, 10, '#1d4ed8');
+  px(x - 5, y - 2 + bob, 10, 8, '#3b82f6');
+  px(x - 5, y - 2 + bob, 10, 2, '#60a5fa');
+  px(x - 1, y + 1 + bob, 2, 2, isWorking ? '#facc15' : '#4ade80');
+
+  if (agent.typing) {
+    const leftArmY = tick % 6 < 3 ? -3 : -1;
+    const rightArmY = tick % 6 >= 3 ? -3 : -1;
+    px(x - 9, y + leftArmY, 3, 5, '#38bdf8');
+    px(x + 6, y + rightArmY, 3, 5, '#38bdf8');
+  } else {
+    px(x - 9, y - 2 + bob - stepOff, 3, 6, '#38bdf8');
+    px(x + 6, y - 2 + bob + stepOff, 3, 6, '#38bdf8');
+  }
+
+  px(x - 7, y - 14 + bob, 14, 11, '#f8fafc');
+  px(x - 6, y - 15 + bob, 12, 1, '#38bdf8');
+
+  px(x - 1, y - 18 + bob, 2, 3, '#facc15');
+  px(x - 1, y - 20 + bob, 2, 2, isWorking ? '#38bdf8' : '#4ade80');
+
+  px(x - 5, y - 12 + bob, 10, 6, '#090d16');
+  const eyeColor = isWorking ? '#38bdf8' : '#4ade80';
+  const accentEye = isWorking ? '#facc15' : '#a7f3d0';
+  const blink = tick % 90 > 85;
+  if (!blink) {
+    px(x - 4, y - 10 + bob, 3, 2, eyeColor);
+    px(x + 1, y - 10 + bob, 3, 2, accentEye);
+  } else {
+    px(x - 4, y - 9 + bob, 3, 1, eyeColor);
+    px(x + 1, y - 9 + bob, 3, 1, accentEye);
+  }
+
+  px(x - 8, y - 12 + bob, 2, 6, isWorking ? '#f472b6' : '#38bdf8');
+  px(x + 6, y - 12 + bob, 2, 6, isWorking ? '#f472b6' : '#38bdf8');
+}
+
+function updateAgent(tick) {
+  let target = deskSpot;
+
+  if (currentState === 'working') {
+    target = deskSpot;
+  } else {
+    target = patrolSpots[patrolIdx];
+  }
+
+  const dx = target.x - agent.x;
+  const dy = target.y - agent.y;
+  const dist = Math.hypot(dx, dy);
+
+  if (dist > 1.5) {
+    const speed = currentState === 'working' ? 1.8 : 0.85;
+    agent.x += (dx / dist) * speed;
+    agent.y += (dy / dist) * speed;
+    agent.frame++;
+    agent.typing = false;
+
+    if (Math.abs(dx) > Math.abs(dy)) {
+      agent.dir = dx > 0 ? 'right' : 'left';
+    } else {
+      agent.dir = dy > 0 ? 'down' : 'up';
+    }
+  } else {
+    agent.x = target.x;
+    agent.y = target.y;
+    agent.frame = 0;
+
+    if (currentState === 'working') {
+      agent.dir = 'down';
+      agent.typing = true;
+      if (tick % 14 === 0) {
+        const glyphs = ['{ }', '</>', '01', 'git', 'fn()', '✓'];
+        particles.push({
+          x: agent.x + (Math.random() * 26 - 13),
+          y: agent.y - 24,
+          text: glyphs[Math.floor(Math.random() * glyphs.length)],
+          life: 45
+        });
+      }
+    } else {
+      agent.dir = 'down';
+      agent.typing = false;
+      idleTimer++;
+      if (idleTimer > 150) {
+        idleTimer = 0;
+        patrolIdx = (patrolIdx + 1) % patrolSpots.length;
+      }
+    }
+  }
+}
+
+function drawParticles() {
+  ctx.font = 'bold 8px monospace';
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.y -= 0.45;
+    p.life--;
+    ctx.fillStyle = `rgba(56, 189, 248, ${Math.max(0, p.life / 45)})`;
+    ctx.fillText(p.text, Math.round(p.x), Math.round(p.y));
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+}
+
+let tick = 0;
+function loop() {
+  tick++;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawRoom(tick);
+  updateAgent(tick);
+
+  if (agent.y <= 122) {
+    drawAgent(tick);
+    drawDeskAndMonitors(tick);
+  } else {
+    drawDeskAndMonitors(tick);
+    drawAgent(tick);
+  }
+
+  drawParticles();
+  requestAnimationFrame(loop);
+}
+
+loop();
+"""
+
 # ====================== GRADIO UI (Gradio 6 compatible) ======================
 
 def launch_ui():
@@ -510,42 +870,63 @@ def launch_ui():
 
     agent = CodeImprovementAgent()
 
+    def start_working(message, history):
+        if not message or not message.strip():
+            return history, "idle"
+        history = history + [{"role": "user", "content": message}]
+        return history, "working"
+
     def respond(message, history):
         if not message or not message.strip():
-            return history
+            return history, "idle"
         response = agent.chat(message)
-        history = history + [
-            {"role": "user", "content": message},
-            {"role": "assistant", "content": response}
-        ]
-        return history
+        history = history + [{"role": "assistant", "content": response}]
+        return history, "idle"
 
     def clear_chat():
         agent.messages = []
-        return []
+        return [], "idle"
 
     with gr.Blocks(title="Code Improvement Agent") as demo:
         gr.Markdown("# Local Code Improvement Agent (Ollama)")
         gr.Markdown(f"**Model:** `{MODEL}` &nbsp;&nbsp;|&nbsp;&nbsp; **Dry-run:** `{DRY_RUN}`")
 
-        chatbot = gr.Chatbot(height=560)
-        msg = gr.Textbox(
-            placeholder="Ask me to analyze the repo, propose improvements, apply changes...",
-            label="Message",
-            scale=7
-        )
+        with gr.Row(equal_height=True):
+            with gr.Column(scale=1):
+                chatbot = gr.Chatbot(height=520)
+                msg = gr.Textbox(
+                    placeholder="Ask me to analyze the repo, propose improvements, apply changes...",
+                    label="Message",
+                )
+                with gr.Row():
+                    submit = gr.Button("Send", variant="primary")
+                    clear = gr.Button("Clear conversation")
 
-        with gr.Row():
-            submit = gr.Button("Send", variant="primary")
-            clear = gr.Button("Clear conversation")
+            with gr.Column(scale=1):
+                pixel_office = gr.HTML(
+                    value="idle",
+                    html_template=OFFICE_HTML_TEMPLATE,
+                    js_on_load=OFFICE_JS_ON_LOAD,
+                    show_progress="hidden",
+                )
 
-        submit.click(respond, inputs=[msg, chatbot], outputs=chatbot).then(
+        submit.click(
+            start_working, inputs=[msg, chatbot], outputs=[chatbot, pixel_office], show_progress="hidden"
+        ).then(
+            respond, inputs=[msg, chatbot], outputs=[chatbot, pixel_office], show_progress="hidden"
+        ).then(
             lambda: "", None, msg
         )
-        msg.submit(respond, inputs=[msg, chatbot], outputs=chatbot).then(
+
+        msg.submit(
+            start_working, inputs=[msg, chatbot], outputs=[chatbot, pixel_office], show_progress="hidden"
+        ).then(
+            respond, inputs=[msg, chatbot], outputs=[chatbot, pixel_office], show_progress="hidden"
+        ).then(
             lambda: "", None, msg
         )
-        clear.click(clear_chat, outputs=chatbot)
+
+        clear.click(clear_chat, outputs=[chatbot, pixel_office], show_progress="hidden")
 
     print("\nLaunching web UI → http://127.0.0.1:7860")
     demo.launch(
