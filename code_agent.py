@@ -30,11 +30,13 @@ DRY_RUN = False                              # True = never write files
 
 client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama", timeout=60.0)
 
-MAX_CHARS_FULL_READ = 20_000
+MAX_CHARS_FULL_READ = 8_000
+MAX_CHUNK_LINES = 120
 IGNORE_DIRS = {".git", "__pycache__", "node_modules", "venv", ".venv", "dist",
                "build", ".next", "target", ".idea", ".vscode", "coverage", ".tox"}
 SUPPORTED_EXTENSIONS = {".py", ".js", ".ts", ".tsx", ".jsx", ".go", ".rs",
-                        ".java", ".cpp", ".c", ".h", ".rb", ".php", ".svelte", ".vue"}
+                        ".java", ".cpp", ".c", ".h", ".rb", ".php", ".svelte", ".vue",
+                        ".tf", ".tfvars", ".yaml", ".yml"}
 
 PLACEHOLDER_PATTERNS = (
     "<proposed-changes>",
@@ -42,6 +44,14 @@ PLACEHOLDER_PATTERNS = (
     "<insert-code>",
     "TODO: replace with actual",
 )
+
+TOOL_ALIASES = {
+    "list_repo_files": "list_files",
+    "lint": "run_linter",
+    "run_lint": "run_linter",
+    "git_status": "get_git_status",
+    "project_structure": "get_project_structure",
+}
 
 # ====================== LOW-LEVEL HELPERS ======================
 
@@ -100,15 +110,16 @@ def read_file(path: str) -> str:
     except Exception as e:
         return f"Error reading {path}: {e}"
 
-def read_file_chunk(path: str, start_line: int = 1, num_lines: int = 180) -> str:
+def read_file_chunk(path: str, start_line: int = 1, num_lines: int = MAX_CHUNK_LINES) -> str:
     try:
         p = Path(path)
         if p.is_dir():
             return f"Error: '{path}' is a directory, not a file."
         lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
         total = len(lines)
-        start = max(0, start_line - 1)
-        end = min(total, start + num_lines)
+        safe_num = max(1, min(num_lines or MAX_CHUNK_LINES, MAX_CHUNK_LINES))
+        start = max(0, (start_line or 1) - 1)
+        end = min(total, start + safe_num)
         header = f"📄 {path}  |  lines {start+1}–{end} of {total}\n{'─'*60}\n"
         return header + "\n".join(lines[start:end])
     except Exception as e:
@@ -261,7 +272,7 @@ def run_linter() -> str:
 def get_project_structure() -> str:
     return run_cmd(
         "find . -type f \\( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.tsx' "
-        "-o -name '*.go' -o -name '*.rs' -o -name '*.java' \\) "
+        "-o -name '*.go' -o -name '*.rs' -o -name '*.java' -o -name '*.tf' -o -name '*.yaml' -o -name '*.yml' \\) "
         "| grep -vE 'node_modules|__pycache__|venv|.venv|.git|dist|build' | head -150"
     )
 
@@ -285,6 +296,11 @@ TOOLS = {
     "run_command": {"function": run_cmd, "description": "Run non-interactive shell command", "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}, "required": ["cmd"]}},
 }
 
+def resolve_tool_name(name: str) -> str:
+    if name in TOOLS:
+        return name
+    return TOOL_ALIASES.get(name, name)
+
 def get_openai_tools():
     return [{"type": "function", "function": {"name": n, "description": t["description"], "parameters": t["parameters"]}} for n, t in TOOLS.items()]
 
@@ -302,7 +318,9 @@ def extract_text_tool_calls(content: str) -> List[Tuple[str, Dict[str, Any]]]:
         try:
             obj, end_idx = decoder.raw_decode(content[brace_idx:])
             idx = brace_idx + end_idx
-            if isinstance(obj, dict) and isinstance(obj.get("name"), str) and obj["name"] in TOOLS:
+            raw_name = obj.get("name") if isinstance(obj, dict) else None
+            resolved = resolve_tool_name(raw_name) if isinstance(raw_name, str) else None
+            if resolved and resolved in TOOLS:
                 args = obj.get("arguments")
                 if isinstance(args, str):
                     try:
@@ -311,7 +329,7 @@ def extract_text_tool_calls(content: str) -> List[Tuple[str, Dict[str, Any]]]:
                         args = {}
                 if not isinstance(args, dict):
                     args = {}
-                found.append((obj["name"], args))
+                found.append((resolved, args))
         except Exception:
             idx = brace_idx + 1
     return found
@@ -337,43 +355,45 @@ Create branch → Write files → Run tests → Commit → (PR or patch)
 """
 
     def _execute_tool_call(self, name: str, args: Dict[str, Any], call_id: str) -> None:
+        resolved_name = resolve_tool_name(name)
         display = {k: (f"[{len(v)} files]" if k == "files" else
                        (v[:70] + "..." if isinstance(v, str) and len(v) > 70 else v))
                    for k, v in args.items()}
-        print(f"→ {name}({display})")
+        print(f"→ {resolved_name}({display})")
 
-        result = TOOLS[name]["function"](**args) if name in TOOLS else f"Unknown tool {name}"
+        result = TOOLS[resolved_name]["function"](**args) if resolved_name in TOOLS else f"Unknown tool {name}"
         result_str = str(result)
-        if len(result_str) > 8500:
-            result_str = result_str[:8500] + "\n... [truncated]"
+        if len(result_str) > 6000:
+            result_str = result_str[:6000] + "\n... [truncated]"
         print(f"← {len(result_str)} chars")
 
         self.messages.append({
             "role": "tool",
             "tool_call_id": call_id,
-            "name": name,
+            "name": resolved_name,
             "content": result_str
         })
 
     def _dispatch_calls(self, calls: List[Tuple[str, Dict[str, Any], str]], seen_calls: set) -> int:
         executed = 0
         for name, args, call_id in calls:
-            call_sig = (name, json.dumps(args, sort_keys=True, default=str))
+            resolved_name = resolve_tool_name(name)
+            call_sig = (resolved_name, json.dumps(args, sort_keys=True, default=str))
             if call_sig in seen_calls:
-                print(f"↺ Skipped duplicate {name}")
+                print(f"↺ Skipped duplicate {resolved_name}")
                 self.messages.append({
                     "role": "tool",
                     "tool_call_id": call_id,
-                    "name": name,
-                    "content": "Already called with these exact arguments. Do not repeat; use the prior result and respond."
+                    "name": resolved_name,
+                    "content": "You ALREADY have the full output of this tool call earlier in this conversation. Do NOT call any more tools—write your final answer right now using the output you already received."
                 })
                 continue
             seen_calls.add(call_sig)
-            self._execute_tool_call(name, args, call_id)
+            self._execute_tool_call(resolved_name, args, call_id)
             executed += 1
         return executed
 
-    def chat(self, user_message: str, max_steps: int = 5) -> str:
+    def chat(self, user_message: str, max_steps: int = 8) -> str:
         if not self.messages:
             self.messages.append({"role": "system", "content": self.system_prompt})
         self.messages.append({"role": "user", "content": user_message})
@@ -432,7 +452,24 @@ Create branch → Write files → Run tests → Commit → (PR or patch)
                 self.messages.append({"role": "assistant", "content": raw_content})
                 return raw_content
 
-        return "Max steps reached."
+        # Step budget exhausted: ask for a direct wrap-up summary without calling more tools
+        self.messages.append({
+            "role": "user",
+            "content": "Step limit reached. Provide a concise summary of what actions were taken and what remains."
+        })
+        try:
+            wrap_response = client.chat.completions.create(
+                model=MODEL,
+                messages=self.messages,
+                temperature=0.1,
+            )
+            summary = (wrap_response.choices[0].message.content or "").strip() or "Max steps reached."
+        except Exception:
+            summary = "Max steps reached."
+
+        print("\n" + summary)
+        self.messages.append({"role": "assistant", "content": summary})
+        return summary
 
 # ====================== GRADIO UI (Gradio 6 compatible) ======================
 
