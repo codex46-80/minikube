@@ -7,3 +7,4 @@ crash.*.log
 kubeconfig
 *.pem
 *.key
+*.bak
