@@ -1,0 +1,25 @@
+diff --git a/code_agent.py b/code_agent.py
+index 8797dd4..053fcd2 100644
+--- a/code_agent.py
++++ b/code_agent.py
+@@ -184,7 +184,8 @@ def create_branch(branch_name: str = None) -> str:
+     if not branch_name:
+         branch_name = f"ai-improve/{datetime.now().strftime('%Y%m%d-%H%M')}"
+     if run_cmd(f"git branch --list {branch_name}").strip():
+-        return f"Branch '{branch_name}' already exists."
++        run_cmd(f"git checkout {branch_name}")
++        return f"Switched to existing branch: {branch_name}"
+     result = run_cmd(f"git checkout -b {branch_name}")
+     return f"Created & switched to branch: {branch_name}\n{result}"
+ 
+@@ -193,7 +194,7 @@ def commit_changes(message: str) -> str:
+         return "Not a git repository."
+     if DRY_RUN:
+         return f"[DRY-RUN] Would commit: {message}"
+-    run_cmd("git add -A")
++    run_cmd("git add -A && git reset -- '*.bak' 2>/dev/null || true")
+     safe_msg = message.replace('"', '\\"')
+     return run_cmd(f'git commit -m "{safe_msg}"')
+ 
+warning: in the working copy of 'code_agent.py', CRLF will be replaced by LF the next time Git touches it
+(no output)

@@ -85,6 +85,27 @@ def run_cmd(cmd: str, cwd: str = ".") -> str:
 def is_git_repo() -> bool:
     return run_cmd("git rev-parse --is-inside-work-tree 2>/dev/null").strip() == "true"
 
+def _suggest_matching_paths(target: str) -> List[str]:
+    clean = target.lstrip("./")
+    stem = Path(clean).name.lower()
+    matches = []
+    for path in Path(".").rglob("*"):
+        if not path.is_file():
+            continue
+        if any(p in IGNORE_DIRS for p in path.parts):
+            continue
+        rel = str(path).lstrip("./")
+        if stem and (stem in rel.lower() or path.suffix.lower() in {".tf", ".yaml", ".yml"}):
+            matches.append(rel)
+    return sorted(matches)[:15]
+
+def _missing_path_message(path: str) -> str:
+    suggestions = _suggest_matching_paths(path)
+    hint = ""
+    if suggestions:
+        hint = " Matching/infra files in repo:\n- " + "\n- ".join(suggestions)
+    return f"Error: '{path}' does not exist. Call list_files or get_project_structure to get exact paths.{hint}"
+
 # ====================== TOOLS ======================
 
 def list_repo_files() -> List[str]:
@@ -93,7 +114,7 @@ def list_repo_files() -> List[str]:
         if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
             if any(p in IGNORE_DIRS for p in path.parts):
                 continue
-            files.append(str(path))
+            files.append(str(path).lstrip("./"))
     return sorted(files)[:300]
 
 def read_file(path: str) -> str:
@@ -101,6 +122,8 @@ def read_file(path: str) -> str:
         p = Path(path)
         if p.is_dir():
             return f"Error: '{path}' is a directory, not a file. Use list_files or get_project_structure."
+        if not p.exists():
+            return _missing_path_message(path)
         content = p.read_text(encoding="utf-8", errors="ignore")
         if len(content) > MAX_CHARS_FULL_READ:
             return (content[:MAX_CHARS_FULL_READ] +
@@ -115,6 +138,8 @@ def read_file_chunk(path: str, start_line: int = 1, num_lines: int = MAX_CHUNK_L
         p = Path(path)
         if p.is_dir():
             return f"Error: '{path}' is a directory, not a file."
+        if not p.exists():
+            return _missing_path_message(path)
         lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
         total = len(lines)
         safe_num = max(1, min(num_lines or MAX_CHUNK_LINES, MAX_CHUNK_LINES))
@@ -184,7 +209,8 @@ def create_branch(branch_name: str = None) -> str:
     if not branch_name:
         branch_name = f"ai-improve/{datetime.now().strftime('%Y%m%d-%H%M')}"
     if run_cmd(f"git branch --list {branch_name}").strip():
-        return f"Branch '{branch_name}' already exists."
+        run_cmd(f"git checkout {branch_name}")
+        return f"Switched to existing branch: {branch_name}"
     result = run_cmd(f"git checkout -b {branch_name}")
     return f"Created & switched to branch: {branch_name}\n{result}"
 
@@ -193,7 +219,7 @@ def commit_changes(message: str) -> str:
         return "Not a git repository."
     if DRY_RUN:
         return f"[DRY-RUN] Would commit: {message}"
-    run_cmd("git add -A")
+    run_cmd("git add -A && git reset -- '*.bak' 2>/dev/null || true")
     safe_msg = message.replace('"', '\\"')
     return run_cmd(f'git commit -m "{safe_msg}"')
 
@@ -271,15 +297,16 @@ def run_linter() -> str:
 
 def get_project_structure() -> str:
     return run_cmd(
-        "find . -type f \\( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.tsx' "
-        "-o -name '*.go' -o -name '*.rs' -o -name '*.java' -o -name '*.tf' -o -name '*.yaml' -o -name '*.yml' \\) "
-        "| grep -vE 'node_modules|__pycache__|venv|.venv|.git|dist|build' | head -150"
+        "find . -maxdepth 4 -type f \\( -name '*.py' -o -name '*.js' -o -name '*.ts' -o -name '*.tsx' "
+        "-o -name '*.go' -o -name '*.rs' -o -name '*.java' -o -name '*.tf' -o -name '*.tfvars' "
+        "-o -name '*.yaml' -o -name '*.yml' \\) "
+        "| grep -vE 'node_modules|__pycache__|venv|.venv|.git|dist|build|.terraform' | sort | head -150"
     )
 
 # ====================== TOOL REGISTRY ======================
 
 TOOLS = {
-    "list_files": {"function": list_repo_files, "description": "List source files", "parameters": {"type": "object", "properties": {}, "required": []}},
+    "list_files": {"function": list_repo_files, "description": "List source and config files", "parameters": {"type": "object", "properties": {}, "required": []}},
     "read_file": {"function": read_file, "description": "Read full file (auto-truncates large ones)", "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}},
     "read_file_chunk": {"function": read_file_chunk, "description": "Read specific lines from a large file", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "start_line": {"type": "integer"}, "num_lines": {"type": "integer"}}, "required": ["path"]}},
     "write_file": {"function": write_file, "description": "Write one file. ONLY after explicit user confirmation.", "parameters": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path", "content"]}},
@@ -345,9 +372,10 @@ class CodeImprovementAgent:
 Strict rules:
 1. NEVER call write_file, write_files, create_branch, commit_changes, or create_pull_request unless the user explicitly asks for or confirms that action.
 2. When asked to analyze or propose improvements without writing files, only inspect/read/lint/check status and return a concrete written proposal.
-3. For large files always use read_file_chunk.
-4. Always pass actual file paths and complete, real code—never directory paths or placeholders like "<proposed-changes>".
-5. Do not repeat identical tool calls if they already returned no output or the same result.
+3. Call list_files or get_project_structure first if you are unsure of exact file paths. Never guess paths.
+4. For large files always use read_file_chunk.
+5. Always pass actual file paths and complete, real code—never directory paths or placeholders like "<proposed-changes>".
+6. Do not repeat identical tool calls if they already returned no output or the same result.
 
 Recommended workflow:
 Explore → Lint → Read key files → Propose improvements → Wait for confirmation → 
